@@ -33,8 +33,8 @@ class GaussianElliptic2(object):
         assert type(alpha) == type(1.0) or type(alpha) == type(np.array(1.0)) \
             or type(alpha) == type(1)
         assert invM == 'full' or invM == 'simple', "invM must be 'full' or 'simple'"
-        assert boundary == 'Neumann' or boundary == 'DirichletZero', \
-                "boundary must be 'Neumann' or 'DirichletZero'"
+        assert boundary == 'Neumann' or boundary == 'Dirichlet', \
+                "boundary must be 'Neumann' or 'Dirichlet'"
         
         self.domain = domain
         self.function_space_dim = self.domain.function_space.dim()
@@ -69,6 +69,9 @@ class GaussianElliptic2(object):
         self.bc = boundary
         self.boundary(self.M_)
         self.boundary(self.K_)
+        self.index_boundary = None
+        if self.bc == "Dirichlet":
+            self.boundary_index()
 
         self.invM = invM
         # construct numpy matrix
@@ -143,16 +146,29 @@ class GaussianElliptic2(object):
         self.mean_fun.vector()[:] = mean_fun_vec
         
     def boundary(self, b):
-        if self.bc == 'DirichletZero':
+        if self.bc == 'Dirichlet':
             def boundary(x, on_boundary):
                 return on_boundary
             bc = fe.DirichletBC(self.domain.function_space, fe.Constant('0.0'), boundary)
             bc.apply(b)
     
+    def boundary_index(self):
+        a = fe.Function(self.domain.function_space)
+        a.vector()[:] = 1.0
+        v_ = fe.TestFunction(self.domain.function_space)
+        aa = fe.assemble(a*v_*fe.dx)
+        bb = fe.assemble(a*v_*fe.dx)
+        
+        def boundary(x, on_boundary):
+            return on_boundary
+        bc = fe.DirichletBC(self.domain.function_space, fe.Constant('0.0'), boundary)
+        
+        bc.apply(aa)
+        self.index_boundary = (aa[:] != bb[:])
+    
     def boundary_vec(self, b):
-        if self.bc == 'DirichletZero':
-            b[0] = 0
-            b[-1] = 0
+        if self.bc == 'Dirichlet':
+            b[self.index_boundary] = 0.0
         return b
         
     def generate_K(self):
