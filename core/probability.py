@@ -33,8 +33,8 @@ class GaussianElliptic2(object):
         assert type(alpha) == type(1.0) or type(alpha) == type(np.array(1.0)) \
             or type(alpha) == type(1)
         assert invM == 'full' or invM == 'simple', "invM must be 'full' or 'simple'"
-        assert boundary == 'Neumann' or boundary == 'Dirichlet', \
-                "boundary must be 'Neumann' or 'Dirichlet'"
+        assert boundary == 'Neumann' or boundary == 'DirichletZero', \
+                "boundary must be 'Neumann' or 'DirichletZero'"
         
         self.domain = domain
         self.function_space_dim = self.domain.function_space.dim()
@@ -66,12 +66,9 @@ class GaussianElliptic2(object):
         bb = fe.inner(u, v)*fe.dx
         self.M_ = fe.assemble(bb)
 
-        if boundary == 'Dirichlet':
-            def boundary(x, on_boundary):
-                return on_boundary
-            bc = fe.DirichletBC(self.domain.function_space, fe.Constant('0.0'), boundary)
-            bc.apply(self.K_)
-            bc.apply(self.M_)
+        self.bc = boundary
+        self.boundary(self.M_)
+        self.boundary(self.K_)
 
         self.invM = invM
         # construct numpy matrix
@@ -145,6 +142,19 @@ class GaussianElliptic2(object):
     def update_mean_fun(self, mean_fun_vec):
         self.mean_fun.vector()[:] = mean_fun_vec
         
+    def boundary(self, b):
+        if self.bc == 'DirichletZero':
+            def boundary(x, on_boundary):
+                return on_boundary
+            bc = fe.DirichletBC(self.domain.function_space, fe.Constant('0.0'), boundary)
+            bc.apply(b)
+    
+    def boundary_vec(self, b):
+        if self.bc == 'DirichletZero':
+            b[0] = 0
+            b[-1] = 0
+        return b
+        
     def generate_K(self):
         u = fe.TrialFunction(self.domain.function_space)
         v = fe.TestFunction(self.domain.function_space)
@@ -152,6 +162,7 @@ class GaussianElliptic2(object):
         a = fe.Constant(self._alpha)*fe.inner(theta*fe.grad(u), fe.grad(v))*fe.dx \
             + fe.Constant(self._alpha)*fe.inner(self._a_fun*u, v)*fe.dx
         self.K_ = fe.assemble(a)
+        self.boundary(self.K_)
         self.K = trans2spnumpy(self.K_)
         return self.K
     
@@ -160,6 +171,7 @@ class GaussianElliptic2(object):
         v = fe.TestFunction(self.domain.function_space)
         a = fe.inner(u, v)*fe.dx
         self.M_ = fe.assemble(a)
+        self.boundary(self.M_)
         self.M = trans2spnumpy(self.M_)
         return self.M
     
@@ -190,7 +202,9 @@ class GaussianElliptic2(object):
         
         if method == 'numpy':
             n = np.random.normal(0, 1, (self.function_space_dim,))
-            fun_vec = spsl.spsolve(self.K, self.M_half@n)
+            b = self.M_half@n
+            self.boundary_vec(b)
+            fun_vec = spsl.spsolve(self.K, b)
             return np.array(fun_vec)
         elif method == 'FEniCS':
             n_ = fe.Vector()
