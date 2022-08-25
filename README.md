@@ -28,3 +28,12 @@ In this folder, we provide codes for inverse problems of the steady state Darcy 
 The **common.py** in the folder of the SimpleSmooth provides the classes 
 + EquSolver: contains forward equation solver, adjoint equation solver, incremental forward solver, and incremental adjoint solver
 + ModelDarcyFlow: composed by prior measure, differential equations, and noise distributions 
+
+
+Citation: 
+@article{IPBayesML,
+ title = {IPBayesML: Programs for Inverse Problems of PDEs with Bayesian and Machine Learning Methods }, 
+ author = {Junxiong Jia}, 
+ year = {2022},
+ url = {https://github.com/jjx323/IPBayesML}
+}
