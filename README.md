@@ -30,10 +30,10 @@ The **common.py** in the folder of the SimpleSmooth provides the classes
 + ModelDarcyFlow: composed by prior measure, differential equations, and noise distributions 
 
 
-Citation: 
-@article{IPBayesML,
- title = {IPBayesML: Programs for Inverse Problems of PDEs with Bayesian and Machine Learning Methods }, 
- author = {Junxiong Jia}, 
- year = {2022},
- url = {https://github.com/jjx323/IPBayesML}
+**Citation:** \
+@article{IPBayesML, \
+ title = {IPBayesML: Programs for Inverse Problems of PDEs with Bayesian and Machine Learning Methods }, \
+ author = {Junxiong Jia}, \
+ year = {2022},\
+ url = {https://github.com/jjx323/IPBayesML}  \
 }
