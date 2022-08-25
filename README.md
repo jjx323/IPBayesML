@@ -1,6 +1,6 @@
 # IPBayesML: Programs for Inverse Problems of PDEs with Bayesian and Machine Learning Methods
 
-## core: provide the basic components of coding statistical inverse problems;
+## core: provide the basic components of coding statistical inverse problems
 + probability.py
 + noise.py
 + model.py
@@ -20,7 +20,7 @@ The **common.py** in the folder of the SimpleSmooth provides the classes
 + EquSolver: contains forward equation solver, adjoint equation solver, incremental forward solver, and incremental adjoint solver
 + ModelSS: composed by prior measure, differential equations, and noise distributions 
 
-## DarcyFlow
+## SteadyStateDarcyFlow
 In this folder, we provide codes for inverse problems of the steady state Darcy flow equation. Details of the inverse problems of Darcy flow can be found in a some articles: 
 > 1. M. Dashti, A. M. Stuart, The Bayesian Approch to Inverse Problems, Hankbook of Uncertainty Quantification, 2017 [Section 1.3 Elliptic Inverse Problem]
 > 2. Junxiong Jia, Peijun Li, Deyu Meng, Stein variational gradient descent on infinite-dimensional space and applications to statistical inverse problems, SIAM Journal on Numerical Analysis, 60(4): 2225-2252, 2022. 
