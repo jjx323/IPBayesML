@@ -34,8 +34,9 @@ class LaplaceApproximate(object):
         self.equ_solver = model.equ_solver
         self.noise = model.noise 
         self.M = sps.csc_matrix(model.M)
-        self.M_half = sps.csc_matrix(sps.diags(np.sqrt(self.M.diagonal())))
-        self.Minv_half = sps.csc_matrix(sps.diags(np.sqrt(1/self.M.diagonal())))
+        lamped_elements = np.array(np.sum(self.M, axis=1)).flatten()
+        self.M_lamped_half = sps.csc_matrix(sps.diags(np.sqrt(lamped_elements)))
+        self.Minv_lamped_half = sps.csc_matrix(sps.diags(np.sqrt(1/lamped_elements)))
         self.S = model.S
         
     def set_mean(self, vec):
@@ -172,7 +173,7 @@ class LaplaceApproximate(object):
     def generate_sample(self):
         assert hasattr(self, "mean") and hasattr(self, "eigval") and hasattr(self, "eigvec")
         n = np.random.normal(0, 1, (self.fun_dim,))
-        val1 = self.Minv_half@n
+        val1 = self.Minv_lamped_half@n
         pr = 1.0/np.sqrt(self.eigval+1.0) - 1.0
         Pr = sps.csc_matrix(sps.diags(pr))
         val2 = self.eigvec@Pr@self.eigvec.T@self.M@val1
