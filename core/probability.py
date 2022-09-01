@@ -3,12 +3,12 @@
 """
 Created on Wed Apr 13 19:49:46 2022
 
-@author: jjx323
+@author: Junxiong Jia
 """
 
 import numpy as np
 import fenics as fe
-# import scipy.linalg as sl
+import scipy.linalg as sl
 import scipy.sparse as sps
 import scipy.sparse.linalg as spsl
 # from scipy.sparse.linalg import LinearOperator
@@ -29,7 +29,20 @@ class GaussianElliptic2(object):
     SIAM J. Sci. Comput., 2013
     '''
     def __init__(self, domain, alpha=1.0, a_fun=fe.Constant(1.0), theta=1.0, 
-                 mean_fun=None, tensor=False, boundary='Neumann', invM='full'):
+                 mean_fun=None, tensor=False, boundary='Neumann', invM='full',
+                 use_LU=False):
+        
+        """
+        boundary (string): 'Neumann' or 'Dirichlet'
+        mean_fun (fenics.Function or None): None(set the mean function to zero)
+        invM (string): 'full' (use the matrix M), 
+                       'simple' (use diag(M.diagonal()) instead of M)
+        use_LU (True or False): 
+                take LU decomposition of the sparse matrix K and M, then Mx=b and Kx=b 
+                are all solved by lu.solve directly that may be faster than spsolve. 
+                (splu in scipy may take longer time than spsolve, however, if we need 
+                 to generate many samples, we only need to run splu once)
+        """
         assert type(alpha) == type(1.0) or type(alpha) == type(np.array(1.0)) \
             or type(alpha) == type(1)
         assert invM == 'full' or invM == 'simple', "invM must be 'full' or 'simple'"
@@ -96,6 +109,13 @@ class GaussianElliptic2(object):
         self.temp0 = fe.Function(self.domain.function_space)
         self.temp1 = fe.Function(self.domain.function_space)
         self.temp2 = fe.Function(self.domain.function_space)
+        
+        ## using LU decomposition to accelerate computation
+        self.use_LU = use_LU
+        self.luM, self.luK = None, None
+        if self.use_LU == True:
+            self.luM = spsl.splu(self.M.tocsc()) 
+            self.luK = spsl.splu(self.K.tocsc())
             
     @property
     def alpha(self):
@@ -180,6 +200,8 @@ class GaussianElliptic2(object):
         self.K_ = fe.assemble(a)
         self.boundary(self.K_)
         self.K = trans2spnumpy(self.K_)
+        if self.use_LU == True:
+            self.luK = spsl.splu(self.K)
         return self.K
     
     def generate_M(self):
@@ -189,6 +211,8 @@ class GaussianElliptic2(object):
         self.M_ = fe.assemble(a)
         self.boundary(self.M_)
         self.M = trans2spnumpy(self.M_)
+        if self.use_LU == True:
+            self.luM = spsl.splu(self.M)
         return self.M
     
     def generate_sample(self, method='numpy'):
@@ -220,7 +244,12 @@ class GaussianElliptic2(object):
             n = np.random.normal(0, 1, (self.function_space_dim,))
             b = self.M_half@n
             self.boundary_vec(b)
-            fun_vec = spsl.spsolve(self.K, b)
+            if self.use_LU == False:
+                fun_vec = spsl.spsolve(self.K, b)
+            elif self.use_LU == True:
+                fun_vec = self.luK.solve(b)
+            else:
+                raise NotImplementedError("use_LU must be True or False")
             return np.array(fun_vec)
         elif method == 'FEniCS':
             n_ = fe.Vector()
@@ -243,7 +272,14 @@ class GaussianElliptic2(object):
         if method == 'numpy':
             temp1 = u_vec - self.mean_fun.vector()[:]
             temp2 = v_vec - self.mean_fun.vector()[:]
-            return temp1@(self.K.T)@spsl.spsolve(self.M, self.K@temp2)
+            if self.use_LU == False:
+                return temp1@(self.K.T)@spsl.spsolve(self.M, self.K@temp2)
+            elif self.use_LU == True:
+                val = self.luM.solve(self.K@temp2)
+                val = temp1@(self.K.T)@val
+                return val
+            else:
+                raise NotImplementedError("use_LU must be True or False")
         elif method == 'FEniCS':
             self.temp0.vector()[:] = v_vec - self.mean_fun.vector()[:]
             if self.invM == 'full':
@@ -268,8 +304,15 @@ class GaussianElliptic2(object):
         if method == 'numpy':
             res = u_vec - self.mean_fun.vector()[:]
             if self.invM == 'full':
-                grad_vec = (self.K.T)@spsl.spsolve(self.M, self.K@res)
-                grad_vec = spsl.spsolve(self.M, grad_vec)
+                if self.use_LU == False:
+                    grad_vec = (self.K.T)@spsl.spsolve(self.M, self.K@res)
+                    grad_vec = spsl.spsolve(self.M, grad_vec)
+                elif self.use_LU == True:
+                    grad_vec = self.luM.solve(self.K@res)
+                    grad_vec = (self.K.T)@grad_vec 
+                    grad_vec = self.luM.solve(grad_vec)
+                else:
+                    raise NotImplementedError("use_LU must be True or False")
             elif self.invM == 'simple':
                 grad_vec = self.Mid@(self.K.T)@self.Mid@self.K@res
             return grad_vec
@@ -304,8 +347,15 @@ class GaussianElliptic2(object):
         
         if method == 'numpy':
             if self.invM == 'full':
-                temp = (self.K.T)@spsl.spsolve(self.M, self.K@u_vec)
-                temp = spsl.spsolve(self.M, temp)
+                if self.use_LU == False:
+                    temp = (self.K.T)@spsl.spsolve(self.M, self.K@u_vec)
+                    temp = spsl.spsolve(self.M, temp)
+                elif self.use_LU == True:
+                    temp = self.luM.solve(self.K@u_vec)
+                    temp = (self.K.T)@temp
+                    temp = self.luM.solve(temp)
+                else:
+                    raise NotImplementedError("use_LU must be True or False")
             elif self.invM == 'simple':
                 temp = self.Mid@(self.K.T)@self.Mid@self.K@u_vec
             return np.array(temp)
@@ -329,11 +379,26 @@ class GaussianElliptic2(object):
         ## Usually, algorithms need a symmetric matrix.
         ## Here, we drop the last M in prior, e.g., 
         ## For GaussianElliptic2, we calculate K^{-1}MK^{-1}m_vec instead of K^{-1}MK^{-1}M m_vec 
-        temp = spsl.spsolve(self.K, self.M@spsl.spsolve(self.K, m_vec))
+        # temp = spsl.spsolve(self.K, self.M@spsl.spsolve(self.K, self.M@m_vec))
+        if self.use_LU == False:
+            temp = spsl.spsolve(self.K, self.M@spsl.spsolve(self.K, m_vec))
+        elif self.use_LU == True:
+            temp = self.luK.solve(m_vec)
+            temp = self.M@temp
+            temp = self.luK.solve(temp)
+        else:
+            raise NotImplementedError("use_LU must be True or False")
         return np.array(temp)
     
     def precondition_inv(self, m_vec):
-        temp = self.K@spsl.spsolve(self.M, self.K@m_vec)
+        if self.use_LU == False:
+            temp = self.K@spsl.spsolve(self.M, self.K@m_vec)
+        elif self.use_LU == True:
+            temp = self.luM.solve(self.K@m_vec)
+            temp = self.K@temp
+        else:
+            raise NotImplementedError("use_LU must be True or False")
+        # temp = spsl.spsolve(self.M, temp)
         return np.array(temp)
 
     def pointwise_variance_field(self, xx, yy, method="numpy"):
@@ -360,7 +425,16 @@ class GaussianElliptic2(object):
         if method == "FEniCS":
             raise NotImplementedError
         elif method == "numpy":
-            val = SN@spsl.spsolve(self.K, self.M@spsl.spsolve(self.K, SM))
+            if self.use_LU == False:
+                val = SN@spsl.spsolve(self.K, self.M@spsl.spsolve(self.K, SM))
+            elif self.use_LU == True:
+                val = self.luK.solve(SM)
+                val = self.M@val
+                val = self.luK.solve(val)
+                val = SN@val 
+            else:
+                raise NotImplementedError("use_LU must be True or False")
+                
             if type(val) == type(self.M):
                 val = val.todense()
             return np.array(val)
@@ -368,7 +442,200 @@ class GaussianElliptic2(object):
             assert False, "method must be numpy or FEniCS (FEniCS has not yet been implemented)"
 
 
+############################################################################################
+class GaussianFiniteRank(object):
+    '''
+    [1] F. J. Pinski, G. Simpson, A. M. Stuart, H. Weber, 
+    Algorithms for Kullback-Leibler approximation of probability measures in 
+    infinite dimensions, SIAM J. Sci. Comput., 2015.
+    
+    [2] T. Bau-Thanh, Q. P. Nguyen, FEM-based discretization-invariant MCMC methods
+    for PDE-constrained Bayesian inverse problems, Inverse Problems & Imaging, 2016
+    
+    Base Gaussian \mathcal{C}_0 = [\alpha (\beta I - \Delta)]^{-s}
+    Typical example s = 2
+    \mathcal{C}_0 v = \lambda^2 v
+    
+    Due to the calculations of eigendecompositions, this method may be not suitable
+    for large-scale problems. A possible idea: projecting large-scale problems 
+    to rough grid and calculate the eigendecompositions. 
+    
+    domain: the original fine grid
+    domain_: the approximate rough grid used to evaluate the eigendecomposition
+    !!! Only P1 elements can be employed!!!
+    '''
+    def __init__(self, domain, domain_=None, mean=None, num_KL=None, 
+                 alpha=1.0, beta=1.0, s=2):
+        if domain_ is None:
+            domain_ = domain
+        self.domain = domain
+        self.domain_ = domain_
+        u_, v_ = fe.TrialFunction(domain.function_space), fe.TestFunction(domain.function_space) 
+        M_ = fe.assemble(fe.inner(u_, v_)*fe.dx)
+        self.M = trans2spnumpy(M_)
+        self.dim_full = self.M.shape[0]
+        u_, v_ = fe.TrialFunction(domain_.function_space), fe.TestFunction(domain_.function_space)
+        Ms_ = fe.assemble(fe.inner(u_, v_)*fe.dx)
+        self.Ms = trans2spnumpy(Ms_)
+        Delta_ = fe.assemble(fe.inner(fe.grad(u_), fe.grad(v_))*fe.dx)
+        self.Delta = trans2spnumpy(Delta_) 
+        self.dim = self.Ms.shape[0]
+        if num_KL is None: num_KL = self.dim 
+        self.num_KL = num_KL
+        self.s = s
+        self.K_org = alpha*(self.Delta + beta*self.Ms)
+        if mean is None:
+            self.mean_vec = np.zeros(self.dim_full)
+        else:
+            self.mean_vec = fe.interpolate(mean, self.domain.function_space).vector()[:]
+        # self.Ms_half = np.eye(self.Ms.diagonal())
+        
+        ## help function
+        self.fun = fe.Function(self.domain.function_space)
+        self.fun_ = fe.Function(self.domain_.function_space)
+        self.is_eig_available = False
+        
+        ## construct interpolation matrix
+        coor = self.domain_.mesh.coordinates()
+        # v2d = fe.vertex_to_dof_map(self.domain_.function_space)
+        d2v = fe.dof_to_vertex_map(self.domain_.function_space)
+        ## full to small matrix
+        self.f2sM = construct_measurement_matrix(coor[d2v], self.domain.function_space)
+        
+        coor = self.domain.mesh.coordinates()
+        # v2d = fe.vertex_to_dof_map(self.domain.function_space)
+        d2v = fe.dof_to_vertex_map(self.domain.function_space)
+        ## small to full matrix
+        self.s2fM = construct_measurement_matrix(coor[d2v], self.domain_.function_space)
 
+    def _K_org_inv_x(self, x):
+        return np.array(spsl.spsolve(self.K_org, x)) 
+    
+    def _K_org_x(self, x):
+        return np.array(self.K_org@x)
+    
+    def _M_x(self, x):
+        return np.array(self.Ms@x)
+    
+    def _Minv_x(self, x):
+        return np.array(spsl.spsolve(self.Ms, x))
+    
+    def _K_org_x_op(self):
+        linear_op = spsl.LinearOperator((self.dim, self.dim), matvec=self._K_org_x)
+        return linear_op
+    
+    def _K_org_inv_x_op(self):
+        linear_op = spsl.LinearOperator((self.dim, self.dim), matvec=self._K_org_x) 
+        return linear_op 
+        
+    def _M_x_op(self):
+        linear_op = spsl.LinearOperator((self.dim, self.dim), matvec=self._M_x)
+        return linear_op 
+    
+    def _Minv_x_op(self):
+        linear_op = spsl.LinearOperator((self.dim, self.dim), matvec=self._Minv_x)
+        return linear_op
+    
+    def calculate_eigensystem(self):
+        ## calculat the eigensystem of I-\Delta, i.e., M^{-1}K_org V = sigma V
+        ## Since the eigensystem calculator usually need the input to be symmetric
+        ## matrix, we solve K_org V = sigma M V instead. 
+        ## If self.num_gamma not reach self.dim, set l=20 to make sure an explicit
+        ## calculations of the eigensystem. 
+        
+        assert self.num_KL <= self.dim
+
+        self.sigma, self.eigvec_ = sl.eigh(self.K_org.todense(), self.Ms.todense())
+        self.lam = np.power(self.sigma, -self.s/2)
+        self.log_lam = np.log(self.lam)
+        self.eigvec = self.s2fM@self.eigvec_
+        
+        self.num_KL = len(self.lam)
+        self.is_eig_available = True
+        
+    def update_mean_fun(self, mean_vec):
+        self.mean_vec = mean_vec
+        
+    def generate_sample_zero_mean(self, num_sample=1):
+        assert self.is_eig_available == True
+        # with torch.no_grad():
+            # self.lam[:self.num_gamma] = self.gamma
+        if num_sample == 1:
+            n = np.random.normal(0, 1, (len(self.lam),))
+            val = self.lam*n
+        else:
+            n = np.random.normal(0, 1, (len(self.lam), num_sample))
+            val = np.diag(self.lam)@n
+            
+        val = self.eigvec@val
+        
+        return np.array(val)
+    
+    def generate_sample(self, num_sample=1):
+        assert self.is_eig_available == True
+        
+        if num_sample == 1:
+            val = self.mean_vec + self.generate_sample_zero_mean(num_sample=num_sample)
+        else:
+            val = self.mean_vec.reshape(-1,1) + self.generate_sample_zero_mean(num_sample=num_sample) 
+            
+        return np.array(val)
+    
+    def evaluate_CM_inner(self, u, v=None):
+        if v is None:
+            v = u
+       
+        mean_vec = self.f2sM@self.mean_vec 
+        v = self.f2sM@v
+        u = self.f2sM@u
+        res = v - mean_vec
+        val = self.Ms@res
+        val = self.eigvec_.T@val
+        lam_n2 = np.power(self.lam, -2)
+        # self.Lam = Lam
+        val = lam_n2*val
+        val = self.eigvec_@val 
+        val = self.Ms@val
+        val = (u - mean_vec)@val
+        
+        return val
+            
+    def evaluate_grad(self, u_vec):
+        assert type(u_vec) is np.ndarray
+        
+        u_vec = self.f2sM@u_vec
+        val = self.eigvec_.T@self.Ms@u_vec
+        lam_n2 = np.power(self.lam, -2)
+        val = lam_n2*val
+        val = self.eigvec_@val
+        val = self.s2fM@val
+        
+        return np.array(val) 
+    
+    def evaluate_hessian_vec(self, u_vec):
+        return self.evaluate_grad(u_vec)
+    
+    def precondition(self, m_vec):
+        m_vec = self.f2sM@m_vec
+        val = self.eigvec_.T@np.array(m_vec)
+        lam_n2 = np.power(self.lam, 2) 
+        val = lam_n2*val
+        val = self.eigvec_@val
+        val = self.s2fM@val
+        
+        return np.array(val)
+    
+    def precondition_inv(self, m_vec):
+        m_vec = np.array(self.f2sM@m_vec)
+        val = self.Ms@m_vec
+        val = self.eigvec_.T@val
+        lam_n2 = np.power(self.lam, -2)
+        val = lam_n2*val
+        val = self.eigvec_@val
+        val = self.Ms@val
+        val = self.s2fM@val
+        
+        return np.array(val)
 
 
 
