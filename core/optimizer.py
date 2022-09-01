@@ -3,7 +3,7 @@
 """
 Created on Thu Apr 14 16:37:54 2022
 
-@author: jjx323
+@author: Junxiong Jia
 """
 
 import numpy as np
@@ -118,7 +118,7 @@ class NewtonCG(OptimBase):
         assert hasattr(model, "loss") 
         
         self.lr = lr
-        if mk == None:
+        if mk is None:
             mk = self.model.prior.mean_vec
         self.mk = mk
         self.model.update_m(mk, update_sol=True)
