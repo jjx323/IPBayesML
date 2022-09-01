@@ -88,8 +88,8 @@ class GaussianElliptic2(object):
         self.K = trans2spnumpy(self.K_)
         self.M = trans2spnumpy(self.M_)
         # self.Mid = sps.diags(1.0/self.M.diagonal())
-        self.lamped_elements = np.array(np.sum(self.M, axis=1)).flatten()
-        self.M_lamped_half = sps.diags(np.sqrt(self.lamped_elements))
+        lamped_elements = np.array(np.sum(self.M, axis=1)).flatten()
+        self.M_lamped_half = sps.diags(np.sqrt(lamped_elements))
         # self.M_half = sps.diags(np.sqrt(self.M.diagonal()))
         # construct FEniCS matrix
         self.M_lamped_half_ = fe.assemble(fe.inner(u, v)*fe.dx)
@@ -97,7 +97,7 @@ class GaussianElliptic2(object):
         self.M_lamped_half_.zero()
         v = fe.Vector()
         self.M_.init_vector(v, 1)
-        v[:] = np.sqrt(self.lamped_elements)
+        v[:] = np.sqrt(lamped_elements)
         self.M_lamped_half_.set_diagonal(v)
         # self.Mid_.zero()
         # vv = fe.Vector()
@@ -398,7 +398,7 @@ class GaussianElliptic2(object):
         
         SN = construct_measurement_matrix(np.array(xx), self.domain.function_space)
         SM = construct_measurement_matrix(np.array(xx), self.domain.function_space)
-        SM = SM.T
+        SM = np.array((SM.T).todense())
         
         if method == "FEniCS":
             raise NotImplementedError
