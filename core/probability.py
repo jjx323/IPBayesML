@@ -29,14 +29,13 @@ class GaussianElliptic2(object):
     SIAM J. Sci. Comput., 2013
     '''
     def __init__(self, domain, alpha=1.0, a_fun=fe.Constant(1.0), theta=1.0, 
-                 mean_fun=None, tensor=False, boundary='Neumann', invM='full',
-                 use_LU=False):
+                 mean_fun=None, tensor=False, boundary='Neumann',
+                 use_LU=True):
         
         """
         boundary (string): 'Neumann' or 'Dirichlet'
         mean_fun (fenics.Function or None): None(set the mean function to zero)
-        invM (string): 'full' (use the matrix M), 
-                       'simple' (use diag(M.diagonal()) instead of M)
+
         use_LU (True or False): 
                 take LU decomposition of the sparse matrix K and M, then Mx=b and Kx=b 
                 are all solved by lu.solve directly that may be faster than spsolve. 
@@ -45,7 +44,6 @@ class GaussianElliptic2(object):
         """
         assert type(alpha) == type(1.0) or type(alpha) == type(np.array(1.0)) \
             or type(alpha) == type(1)
-        assert invM == 'full' or invM == 'simple', "invM must be 'full' or 'simple'"
         assert boundary == 'Neumann' or boundary == 'Dirichlet', \
                 "boundary must be 'Neumann' or 'Dirichlet'"
         
@@ -86,24 +84,25 @@ class GaussianElliptic2(object):
         if self.bc == "Dirichlet":
             self.boundary_index()
 
-        self.invM = invM
         # construct numpy matrix
         self.K = trans2spnumpy(self.K_)
         self.M = trans2spnumpy(self.M_)
-        self.Mid = sps.diags(1.0/self.M.diagonal())
-        self.M_half = sps.diags(np.sqrt(self.M.diagonal()))
+        # self.Mid = sps.diags(1.0/self.M.diagonal())
+        self.lamped_elements = np.array(np.sum(self.M, axis=1)).flatten()
+        self.M_lamped_half = sps.diags(np.sqrt(self.lamped_elements))
+        # self.M_half = sps.diags(np.sqrt(self.M.diagonal()))
         # construct FEniCS matrix
-        self.M_half_ = fe.assemble(fe.inner(u, v)*fe.dx)
-        self.Mid_ = fe.assemble(fe.inner(u, v)*fe.dx)
-        self.M_half_.zero()
+        self.M_lamped_half_ = fe.assemble(fe.inner(u, v)*fe.dx)
+        # self.Mid_ = fe.assemble(fe.inner(u, v)*fe.dx)
+        self.M_lamped_half_.zero()
         v = fe.Vector()
         self.M_.init_vector(v, 1)
-        v[:] = np.sqrt(self.M.diagonal())
-        self.M_half_.set_diagonal(v)
-        self.Mid_.zero()
-        vv = fe.Vector()
-        vv[:] = 1.0/self.M.diagonal()
-        self.Mid_.set_diagonal(vv)
+        v[:] = np.sqrt(self.lamped_elements)
+        self.M_lamped_half_.set_diagonal(v)
+        # self.Mid_.zero()
+        # vv = fe.Vector()
+        # vv[:] = 1.0/self.M.diagonal()
+        # self.Mid_.set_diagonal(vv)
 
         # auxillary functions
         self.temp0 = fe.Function(self.domain.function_space)
@@ -236,13 +235,13 @@ class GaussianElliptic2(object):
         '''
         
         assert self.K is not None 
-        assert self.M_half is not None
+        assert self.M_lamped_half is not None
         
         fun = fe.Function(self.domain.function_space)
         
         if method == 'numpy':
             n = np.random.normal(0, 1, (self.function_space_dim,))
-            b = self.M_half@n
+            b = self.M_lamped_half@n
             self.boundary_vec(b)
             if self.use_LU == False:
                 fun_vec = spsl.spsolve(self.K, b)
@@ -253,10 +252,10 @@ class GaussianElliptic2(object):
             return np.array(fun_vec)
         elif method == 'FEniCS':
             n_ = fe.Vector()
-            self.M_half_.init_vector(n_, 1)
+            self.M_lamped_half_.init_vector(n_, 1)
             n_.set_local(np.random.normal(0, 1, (self.function_space_dim,)))
             # fe.solve(self.K_, fun.vector(), self.M_half_*n_, 'cg', 'ilu')
-            fe.solve(self.K_, fun.vector(), self.M_half_*n_)
+            fe.solve(self.K_, fun.vector(), self.M_lamped_half_*n_)
             return np.array(fun.vector()[:])
         else:
             assert False, "method must be 'FEniCS' or 'numpy'"
@@ -282,10 +281,7 @@ class GaussianElliptic2(object):
                 raise NotImplementedError("use_LU must be True or False")
         elif method == 'FEniCS':
             self.temp0.vector()[:] = v_vec - self.mean_fun.vector()[:]
-            if self.invM == 'full':
-                fe.solve(self.M_, self.temp1.vector(), (self.K_*self.temp0.vector()))
-            elif self.invM == 'simple':
-                self.temp1.vector().set_local(self.Mid_*(self.K_*self.temp0.vector()))
+            fe.solve(self.M_, self.temp1.vector(), (self.K_*self.temp0.vector()))
             self.K_.transpmult(self.temp1.vector(), self.temp2.vector())
             self.temp0.vector()[:] = u_vec - self.mean_fun.vector()[:]
             return (self.temp0.vector()).inner(self.temp2.vector())
@@ -303,30 +299,21 @@ class GaussianElliptic2(object):
         
         if method == 'numpy':
             res = u_vec - self.mean_fun.vector()[:]
-            if self.invM == 'full':
-                if self.use_LU == False:
-                    grad_vec = (self.K.T)@spsl.spsolve(self.M, self.K@res)
-                    grad_vec = spsl.spsolve(self.M, grad_vec)
-                elif self.use_LU == True:
-                    grad_vec = self.luM.solve(self.K@res)
-                    grad_vec = (self.K.T)@grad_vec 
-                    grad_vec = self.luM.solve(grad_vec)
-                else:
-                    raise NotImplementedError("use_LU must be True or False")
-            elif self.invM == 'simple':
-                grad_vec = self.Mid@(self.K.T)@self.Mid@self.K@res
+            if self.use_LU == False:
+                grad_vec = (self.K.T)@spsl.spsolve(self.M, self.K@res)
+                grad_vec = spsl.spsolve(self.M, grad_vec)
+            elif self.use_LU == True:
+                grad_vec = self.luM.solve(self.K@res)
+                grad_vec = (self.K.T)@grad_vec 
+                grad_vec = self.luM.solve(grad_vec)
+            else:
+                raise NotImplementedError("use_LU must be True or False")
             return grad_vec
         elif method == 'FEniCS':
-            if self.invM == 'full':
-                self.temp0.vector()[:] = u_vec - self.mean_fun.vector()[:]
-                fe.solve(self.M_, self.temp1.vector(), (self.K_*self.temp0.vector()))
-                self.K_.transpmult(self.temp1.vector(), self.temp2.vector())
-                fe.solve(self.M_, self.temp1.vector(), self.temp2.vector())
-            elif self.invM == 'simple':
-                self.temp0.vector()[:] = u_vec - self.mean_fun.vector()[:]
-                self.temp1.vector().set_local(self.Mid_*(self.K_*self.temp0.vector()))
-                self.K_.transpmult(self.temp1.vector(), self.temp2.vector())
-                self.temp1.vector().set_local(self.Mid_*self.temp2.vector())
+            self.temp0.vector()[:] = u_vec - self.mean_fun.vector()[:]
+            fe.solve(self.M_, self.temp1.vector(), (self.K_*self.temp0.vector()))
+            self.K_.transpmult(self.temp1.vector(), self.temp2.vector())
+            fe.solve(self.M_, self.temp1.vector(), self.temp2.vector())
             return self.temp1.vector()[:]
         else:
             assert False, "method must be 'FEniCS' or 'numpy'"
@@ -346,30 +333,21 @@ class GaussianElliptic2(object):
         assert type(u_vec) is np.ndarray
         
         if method == 'numpy':
-            if self.invM == 'full':
-                if self.use_LU == False:
-                    temp = (self.K.T)@spsl.spsolve(self.M, self.K@u_vec)
-                    temp = spsl.spsolve(self.M, temp)
-                elif self.use_LU == True:
-                    temp = self.luM.solve(self.K@u_vec)
-                    temp = (self.K.T)@temp
-                    temp = self.luM.solve(temp)
-                else:
-                    raise NotImplementedError("use_LU must be True or False")
-            elif self.invM == 'simple':
-                temp = self.Mid@(self.K.T)@self.Mid@self.K@u_vec
+            if self.use_LU == False:
+                temp = (self.K.T)@spsl.spsolve(self.M, self.K@u_vec)
+                temp = spsl.spsolve(self.M, temp)
+            elif self.use_LU == True:
+                temp = self.luM.solve(self.K@u_vec)
+                temp = (self.K.T)@temp
+                temp = self.luM.solve(temp)
+            else:
+                raise NotImplementedError("use_LU must be True or False")
             return np.array(temp)
         elif method == 'FEniCS':
-            if self.invM == 'full':
-                self.temp0.vector()[:] = self.K@u_vec
-                fe.solve(self.M_, self.temp1.vector(), self.temp0.vector())
-                self.K_.transpmult(self.temp1.vector(), self.temp2.vector())
-                fe.solve(self.M_, self.temp1.vector(), self.temp2.vector())
-            elif self.invM == 'simple':
-                self.temp0.vector()[:] = self.K@u_vec
-                self.temp1.vector().set_local(self.Mid_*self.temp0.vector())
-                self.K_.transpmult(self.temp1.vector(), self.temp2.vector())
-                self.temp1.vector().set_local(self.Mid_*self.temp2.vector())
+            self.temp0.vector()[:] = self.K@u_vec
+            fe.solve(self.M_, self.temp1.vector(), self.temp0.vector())
+            self.K_.transpmult(self.temp1.vector(), self.temp2.vector())
+            fe.solve(self.M_, self.temp1.vector(), self.temp2.vector())
             return self.temp1.vector()[:]
         else:
             assert False, "method must be 'FEniCS' or 'numpy'"
