@@ -3,7 +3,7 @@
 """
 Created on Thu Apr 14 11:53:31 2022
 
-@author: jjx323
+@author: Junxiong Jia
 """
 
 import numpy as np
@@ -39,25 +39,48 @@ class NoiseGaussianIID(object):
             self.covariance = sps.eye(self.dim)*variance
             self.precision = sps.eye(self.dim)*(1.0/variance) 
     
-    def to_tensor(self):
+    def to_tensor(self, dtype=torch.float32):
         assert type(self.covariance) != type(None)
         assert type(self.precision) != type(None)
         assert type(self.mean) != type(None)
         if type(self.covariance) == np.ndarray:
-            self.covariance = torch.tensor(self.covariance, dtype=torch.float32)
+            self.covariance = torch.tensor(self.covariance, dtype=dtype)
         else:
-            self.covariance = torch.tensor(self.covariance.todense(), dtype=torch.float32)
+            self.covariance = torch.tensor(self.covariance.todense(), dtype=dtype)
         if type(self.precision) == np.ndarray:
-            self.precision = torch.tensor(self.precision, dtype=torch.float32)
+            self.precision = torch.tensor(self.precision, dtype=dtype)
         else:
-            self.precision = torch.tensor(self.precision.todense(), dtype=torch.float32)
-        self.mean = torch.tensor(self.mean, dtype=torch.float32)
+            self.precision = torch.tensor(self.precision.todense(), dtype=dtype)
+        self.mean = torch.tensor(self.mean, dtype=dtype)
         self.is_torch = True
         
+    def to_torch_cuda(self, dtype=torch.float32):
+        assert type(self.covariance) != type(None)
+        assert type(self.precision) != type(None)
+        assert type(self.mean) != type(None)
+        if type(self.covariance) == np.ndarray:
+            self.covariance = torch.tensor(self.covariance, dtype=dtype).cuda()
+        else:
+            self.covariance = torch.tensor(self.covariance.todense(), dtype=dtype).cuda()
+        if type(self.precision) == np.ndarray:
+            self.precision = torch.tensor(self.precision, dtype=dtype).cuda()
+        else:
+            self.precision = torch.tensor(self.precision.todense(), dtype=dtype).cuda()
+        self.mean = torch.tensor(self.mean, dtype=dtype).cuda()
+        self.is_torch = True
+    
+    def to_torch(self, device="cpu"):
+        if device == "cpu":
+            self.to_tensor()
+        elif device == "cuda":
+            self.to_torch_cuda()
+        else:
+            raise NotImplementedError("device must be cpu or cuda")
+        
     def to_numpy(self):
-        self.covariance = np.array(self.covariance)
-        self.precision = np.array(self.precision)
-        self.mean = np.array(self.mean) 
+        self.covariance = np.array(self.covariance.cpu())
+        self.precision = np.array(self.precision.cpu())
+        self.mean = np.array(self.mean.cpu()) 
         self.is_torch = False
 
     def update_paramters(self, mean=None, variance=None):
@@ -73,8 +96,9 @@ class NoiseGaussianIID(object):
     
     def generate_sample_zero_mean(self):
         if type(self.covariance) == torch.Tensor:
-            a = torch.normal(0, 1, size=(self.dim,), dtype=torch.float32)
-            B = torch.eye(self.dim, dtype=torch.float32)*torch.sqrt(self.covariance[0])
+            device = self.mean.device
+            a = torch.normal(0, 1, size=(self.dim,), dtype=torch.float32).to(device)
+            B = torch.eye(self.dim, dtype=torch.float32)*torch.sqrt(self.covariance[0]).to(device)
             sample = torch.mv(B, a)
         else:
             a = np.random.normal(0, 1, (self.dim,))
