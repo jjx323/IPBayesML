@@ -3,12 +3,13 @@
 """
 Created on Sun Apr 17 21:03:17 2022
 
-@author: jjx323
+@author: Junxiong Jia
 """
 
 import numpy as np
 import scipy.sparse.linalg as spsl
 import scipy.sparse as sps
+import cupy as cp
 
 
 def trans_matrix_to_operator(A):
@@ -138,12 +139,113 @@ def cg_my(A, b, M=None, Minv=None, x0=None, tol=0.5, atol=0.1, maxiter=1000,
     return xk, info, k
         
 
+def spsolve_lu(L, U, b, perm_c=None, perm_r=None):
+    """ an attempt to use SuperLU data to efficiently solve
+        Ax = Pr.T L U Pc.T x = b
+         - note that L from SuperLU is in CSC format solving for c
+           results in an efficiency warning
+        Pr . A . Pc = L . U
+        Lc = b      - forward solve for c
+         c = Ux     - then back solve for x
+         
+        (spsolve_triangular and spsolve seem all much less efficient than the 
+        lu.solve() method in scipy, so the overall efficiency approximate to the spsolve if 
+        we include the computational time of splu. 
+        
+        When we only use splu once and use spsolve_lu many times, 
+        this implementation may be useful. However, we may use lu.solve() (scipy function)
+        since it is much more efficient. 
+        
+        When implement autograd by pytorch (lu.solve in scipy can hardly be employed), 
+        we may use splu once and spsolve_lu twice. 
+        In this case, there seems no advantage compared with using spsolve directly.
+        How to implement spsolve_lu much more efficient still needs to be explored!!)
+    """
+    if perm_r is not None:
+        perm_r_rev = np.argsort(perm_r)
+        b = b[perm_r_rev]
+
+    try:    # unit_diagonal is a new kw
+        ## spsolve_triangular seems not efficient as that of spsolve with permc_spec="NATURAL"
+        # c = spsl.spsolve_triangular(L, b, lower=True, unit_diagonal=True)
+        c = spsl.spsolve(L, b, permc_spec="NATURAL")
+    except TypeError:
+        c = spsl.spsolve_triangular(L, b, lower=True)
+    # px = spsl.spsolve_triangular(U, c, lower=False)
+    px = spsl.spsolve(U, c, permc_spec="NATURAL")
+    if perm_c is None:
+        return px
+    return px[perm_c]
 
 
+class SuperLU_GPU():
 
+    def __init__(self, shape, L, U, perm_r, perm_c, nnz):
+        """LU factorization of a sparse matrix.
+           This function is modified from the SuperLU implementations in CuPy.
+        Args:
+            shape, L, U, perm_r, perm_c, nnz are typically variables in an scipy 
+            object (scipy.sparse.linalg.SuperLU: LU factorization of a sparse
+            matrix, computed by `scipy.sparse.linalg.splu`, etc).
+        """
 
+        self.shape = shape
+        self.nnz = nnz
+        self.perm_r = cp.array(perm_r)
+        self.perm_c = cp.array(perm_c)
+        self.L = cp.sparse.csr_matrix(L.tocsr())
+        self.U = cp.sparse.csr_matrix(U.tocsr())
 
+        self._perm_c_rev = cp.argsort(self.perm_c)
+        self._perm_r_rev = cp.argsort(self.perm_r)
+        
 
+    def solve(self, rhs, trans='N'):
+        """Solves linear system of equations with one or several right-hand sides.
+        Args:
+            rhs (cupy.ndarray): Right-hand side(s) of equation with dimension
+                ``(M)`` or ``(M, K)``.
+            trans (str): 'N', 'T' or 'H'.
+                'N': Solves ``A * x = rhs``.
+                'T': Solves ``A.T * x = rhs``.
+                'H': Solves ``A.conj().T * x = rhs``.
+        Returns:
+            cupy.ndarray:
+                Solution vector(s)
+        """
+        if not isinstance(rhs, cp.ndarray):
+            raise TypeError('ojb must be cupy.ndarray')
+        if rhs.ndim not in (1, 2):
+            raise ValueError('rhs.ndim must be 1 or 2 (actual: {})'.
+                             format(rhs.ndim))
+        if rhs.shape[0] != self.shape[0]:
+            raise ValueError('shape mismatch (self.shape: {}, rhs.shape: {})'
+                             .format(self.shape, rhs.shape))
+        if trans not in ('N', 'T', 'H'):
+            raise ValueError('trans must be \'N\', \'T\', or \'H\'')
+        if not cp.cusparse.check_availability('csrsm2'):
+            raise NotImplementedError
+
+        x = rhs.astype(self.L.dtype)
+        if trans == 'N':
+            if self.perm_r is not None:
+                x = x[self._perm_r_rev]
+            cp.cusparse.csrsm2(self.L, x, lower=True, transa=trans)
+            cp.cusparse.csrsm2(self.U, x, lower=False, transa=trans)
+            if self.perm_c is not None:
+                x = x[self.perm_c]
+        else:
+            if self.perm_c is not None:
+                x = x[self._perm_c_rev]
+            cp.cusparse.csrsm2(self.U, x, lower=False, transa=trans)
+            cp.cusparse.csrsm2(self.L, x, lower=True, transa=trans)
+            if self.perm_r is not None:
+                x = x[self.perm_r]
+
+        if not x._f_contiguous:
+            # For compatibility with SciPy
+            x = x.copy(order='F')
+        return x
 
 
 
