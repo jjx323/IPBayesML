@@ -297,15 +297,15 @@ class GaussianElliptic2(object):
         '''
         assert type(u_vec) is np.ndarray
         
-        if method == 'numpy':
+         if method == 'numpy':
             res = u_vec - self.mean_fun.vector()[:]
             if self.use_LU == False:
                 grad_vec = (self.K.T)@spsl.spsolve(self.M, self.K@res)
-                grad_vec = spsl.spsolve(self.M, grad_vec)
+                # grad_vec = spsl.spsolve(self.M, grad_vec)
             elif self.use_LU == True:
                 grad_vec = self.luM.solve(self.K@res)
                 grad_vec = (self.K.T)@grad_vec 
-                grad_vec = self.luM.solve(grad_vec)
+                # grad_vec = self.luM.solve(grad_vec)
             else:
                 raise NotImplementedError("use_LU must be True or False")
             return grad_vec
@@ -313,7 +313,7 @@ class GaussianElliptic2(object):
             self.temp0.vector()[:] = u_vec - self.mean_fun.vector()[:]
             fe.solve(self.M_, self.temp1.vector(), (self.K_*self.temp0.vector()))
             self.K_.transpmult(self.temp1.vector(), self.temp2.vector())
-            fe.solve(self.M_, self.temp1.vector(), self.temp2.vector())
+            # fe.solve(self.M_, self.temp1.vector(), self.temp2.vector())
             return self.temp1.vector()[:]
         else:
             assert False, "method must be 'FEniCS' or 'numpy'"
@@ -335,11 +335,11 @@ class GaussianElliptic2(object):
         if method == 'numpy':
             if self.use_LU == False:
                 temp = (self.K.T)@spsl.spsolve(self.M, self.K@u_vec)
-                temp = spsl.spsolve(self.M, temp)
+                # temp = spsl.spsolve(self.M, temp)
             elif self.use_LU == True:
                 temp = self.luM.solve(self.K@u_vec)
                 temp = (self.K.T)@temp
-                temp = self.luM.solve(temp)
+                # temp = self.luM.solve(temp)
             else:
                 raise NotImplementedError("use_LU must be True or False")
             return np.array(temp)
@@ -347,7 +347,7 @@ class GaussianElliptic2(object):
             self.temp0.vector()[:] = self.K@u_vec
             fe.solve(self.M_, self.temp1.vector(), self.temp0.vector())
             self.K_.transpmult(self.temp1.vector(), self.temp2.vector())
-            fe.solve(self.M_, self.temp1.vector(), self.temp2.vector())
+            # fe.solve(self.M_, self.temp1.vector(), self.temp2.vector())
             return self.temp1.vector()[:]
         else:
             assert False, "method must be 'FEniCS' or 'numpy'"
