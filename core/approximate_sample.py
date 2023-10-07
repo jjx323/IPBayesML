@@ -132,8 +132,8 @@ class LaplaceApproximate(object):
             rs = num_eigval + oversampling_factor
             omega = np.random.randn(self.M.shape[0], rs)
             self.eigval, self.eigvec = double_pass(
-                Hessian_misfit, M=prior_var_inv, Minv=prior_var, Mg=self.M,
-                omega=omega, r=num_eigval, l=oversampling_factor,
+                Hessian_misfit, M=prior_var_inv, Minv=prior_var, 
+                r=num_eigval, l=oversampling_factor, n=self.M.shape[0]
                 )
         elif method == 'single_pass':
             raise NotImplementedError
